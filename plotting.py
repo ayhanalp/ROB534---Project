@@ -87,10 +87,10 @@ class Plot(object):
                         'x1': O_i[2],
                         'y1': O_i[3],
                         'line': {
-                            'color': 'purple',
+                            'color': 'green',
                             'width': 4,
                         },
-                        'fillcolor': 'purple',
+                        'fillcolor': 'green',
                         'opacity': 0.70
                     },
                 )

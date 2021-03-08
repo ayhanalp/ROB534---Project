@@ -25,6 +25,7 @@ class SearchSpace(object):
         if any(i[0] >= i[1] for i in dimension_lengths):
             raise Exception("Dimension start must be less than dimension end")
         self.dimension_lengths = dimension_lengths  # length of each dimension
+
         p = index.Property()
         p.dimension = self.dimensions
         if O is None:

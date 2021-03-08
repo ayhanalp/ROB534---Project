@@ -1,110 +1,196 @@
-from operator import itemgetter
+from rrt_star import RRTStar
+from functions import SearchSpace
 
-from heuristics import cost_to_go
-from heuristics import segment_cost, path_cost
-from rrt import RRT
+import math
+import random
+import numpy as np
+import matplotlib.pyplot as plt
+
+import plotly as py
+from plotly import graph_objs as go
 
 
-class RRTStar(RRT) :
-    def __init__(self, X, Q, x_init, x_goal, max_samples, r, prc=0.01, rewire_count=None) :
-        """
-        RRT* Search
-        :param X: Search Space
-        :param Q: list of lengths of edges added to tree
-        :param x_init: tuple, initial location
-        :param x_goal: tuple, goal location
-        :param max_samples: max number of samples to take
-        :param r: resolution of points to sample along edge when checking for collisions
-        :param prc: probability of checking whether there is a solution
-        :param rewire_count: number of nearby vertices to rewire
-        """
-        super().__init__(X, Q, x_init, x_goal, max_samples, r, prc)
-        self.rewire_count = rewire_count if rewire_count is not None else 0
-        self.c_best = float('inf')  # length of best solution thus far
+class MultiagentRRTStar() :
+    def __init__(self, dimension_lengths):
+        self.num_steps = 10
+        self.num_UAVs = 3
+        self.con_distance = 10
+        self.isConnected = True
+        self.paths = dict()
+        self.search_points = np.zeros((self.num_steps, self.num_UAVs, 2))
+        self.curr_poss = []
+        self.dim_lens = dimension_lengths
+        self.search_space = SearchSpace(self.dim_lens)
 
-    def get_nearby_vertices(self, tree, x_init, x_new) :
-        """
-        Get nearby vertices to new vertex and their associated path costs from the root of tree
-        as if new vertex is connected to each one separately.
-        :param tree: tree in which to search
-        :param x_init: starting vertex used to calculate path cost
-        :param x_new: vertex around which to find nearby vertices
-        :return: list of nearby vertices and their costs, sorted in ascending order by cost
-        """
-        X_near = self.nearby(tree, x_new, self.current_rewire_count(tree))
-        L_near = [(path_cost(self.trees[tree].E, x_init, x_near) + segment_cost(x_near, x_new), x_near) for
-                  x_near in X_near]
-        # noinspection PyTypeChecker
-        L_near.sort(key=itemgetter(0))
+    def calc_distance(self, x1_, y1_, x2_, y2_) :
+        return math.sqrt((x2_ - x1_) ** 2 + (y2_ - y1_) ** 2)
 
-        return L_near
+    def isNetworkConnected(self, t_i) :
 
-    def rewire(self, tree, x_new, L_near) :
-        """
-        Rewire tree to shorten edges if possible
-        Only rewires vertices according to rewire count
-        :param tree: int, tree to rewire
-        :param x_new: tuple, newly added vertex
-        :param L_near: list of nearby vertices used to rewire
-        :return:
-        """
-        for c_near, x_near in L_near :
-            curr_cost = path_cost(self.trees[tree].E, self.x_init, x_near)
-            tent_cost = path_cost(self.trees[tree].E, self.x_init, x_new) + segment_cost(x_new, x_near)
-            if tent_cost < curr_cost and self.X.collision_free(x_near, x_new, self.r) :
-                self.trees[tree].E[x_near] = x_new
+        for UAV_i in range(self.num_UAVs) :
+            for other_i in range(self.num_UAVs) :
+                if UAV_i != other_i :
+                    dist_i = self.calc_distance(self.paths[t_i, UAV_i, 0], self.paths[t_i, UAV_i, 1],
+                                                self.paths[t_i, other_i, 0], self.paths[t_i, other_i, 1])
 
-    def connect_shortest_valid(self, tree, x_new, L_near) :
-        """
-        Connect to nearest vertex that has an unobstructed path
-        :param tree: int, tree being added to
-        :param x_new: tuple, vertex being added
-        :param L_near: list of nearby vertices
-        """
-        # check nearby vertices for total cost and connect shortest valid edge
-        for c_near, x_near in L_near :
-            if c_near + cost_to_go(x_near, self.x_goal) < self.c_best and self.connect_to_point(tree, x_near, x_new) :
+                    if dist_i > self.con_distance :
+                        return False
+        return True
+
+    def random_search_point_gen(self, t_i) :
+        radius = self.con_distance
+        point_id = 0
+
+        while True:
+            p_i_x_ = random.randint(self.search_space.dimension_lengths[0, 0],
+                                    self.search_space.dimension_lengths[0, 1])
+
+            p_i_y_ = random.randint(self.search_space.dimension_lengths[0, 0],
+                                    self.search_space.dimension_lengths[0, 1])
+
+            if ([p_i_x_, p_i_y_] not in self.search_points) and (self.search_space.obstacle_free((p_i_x_, p_i_y_))):
                 break
 
-    def current_rewire_count(self, tree) :
-        """
-        Return rewire count
-        :param tree: tree being rewired
-        :return: rewire count
-        """
-        # if no rewire count specified, set rewire count to be all vertices
-        if self.rewire_count is None :
-            return self.trees[tree].V_count
+        while point_id < self.num_UAVs:
+            # random angle
+            alpha = 2 * math.pi * random.random()
+            # random radius
+            r = radius * math.sqrt(random.random())
 
-        # max valid rewire count
-        return min(self.trees[tree].V_count, self.rewire_count)
+            p_i_x_ = r * math.cos(alpha) + p_i_x_
+            p_i_y_ = r * math.sin(alpha) + p_i_y_
 
-    def rrt_star(self) :
-        """
-        Based on algorithm found in: Incremental Sampling-based Algorithms for Optimal Motion Planning
-        http://roboticsproceedings.org/rss06/p34.pdf
-        :return: set of Vertices; Edges in form: vertex: [neighbor_1, neighbor_2, ...]
-        """
-        self.add_vertex(0, self.x_init)
-        self.add_edge(0, self.x_init, None)
+            if ([p_i_x_, p_i_y_] not in self.search_points) and (self.search_space.obstacle_free((p_i_x_, p_i_y_))):
+                self.search_points[t_i, point_id, 0] = p_i_x_
+                self.search_points[t_i, point_id, 1] = p_i_y_
 
-        while True :
-            for q in self.Q :  # iterate over different edge lengths
-                for i in range(q[1]) :  # iterate over number of edges of given length to add
-                    x_new, x_nearest = self.new_and_near(0, q)
-                    if x_new is None :
+                point_id += 1
+
+    def multiagent_RRT_star(self):
+        paths = dict()
+        time_steps = self.num_steps - 1
+
+        X_dimensions = self.dim_lens  # dimensions of Search Space
+
+        # obstacles
+        Obstacles = np.array([(20, 20, 40, 40), (20, 60, 40, 80), (60, 20, 80, 40), (60, 60, 80, 80)])
+
+        Q = np.array([(2, 1)])  # length of tree edges
+        r = 1  # length of smallest edge to check for intersection with obstacles
+        max_samples = 1024  # max number of samples to take before timing out
+        rewire_count = 32  # optional, number of nearby branches to rewire
+        prc = 0.1
+
+        X = SearchSpace(X_dimensions, Obstacles)
+
+        for UAV_id in range(self.num_UAVs):
+            self.search_points[0, UAV_id, 0] = 0
+            self.search_points[0, UAV_id, 1] = 0
+
+        for step_i in range(time_steps):
+            self.random_search_point_gen(step_i + 1)
+
+            for UAV_id in range(self.num_UAVs):
+                x_init = (self.search_points[step_i, UAV_id, 0], self.search_points[step_i, UAV_id, 1])
+                x_goal = (self.search_points[step_i + 1, UAV_id, 0], self.search_points[step_i + 1, UAV_id, 1])
+
+                rrt = RRTStar(X, Q, x_init, x_goal, max_samples, r, prc, rewire_count)
+
+                paths[step_i, UAV_id] = rrt.rrt_star()
+
+        self.paths = paths
+
+        return paths
+
+    #################################
+
+
+if __name__ == '__main__':
+    X_dimensions = np.array([(0, 100), (0, 100)])
+
+    ma_rrt_star = MultiagentRRTStar(X_dimensions)
+    paths = ma_rrt_star.multiagent_RRT_star()
+
+    data = []
+
+    colors = ["red", "green", "blue"]
+    layout = {'title' : 'Plot', 'showlegend' : False}
+
+    layout['shapes'] = []
+
+    O = np.array([(20, 20, 40, 40), (20, 60, 40, 80), (60, 20, 80, 40), (60, 60, 80, 80)])
+
+    for O_i in O :
+        # noinspection PyUnresolvedReferences
+        layout['shapes'].append(
+            {
+                'type' : 'rect',
+                'x0' : O_i[0],
+                'y0' : O_i[1],
+                'x1' : O_i[2],
+                'y1' : O_i[3],
+                'line' : {
+                    'color' : 'green',
+                    'width' : 4,
+                },
+                'fillcolor' : 'green',
+                'opacity' : 0.70
+            },
+        )
+
+    for s_i in range(ma_rrt_star.num_steps-1):
+        for u_i in range(ma_rrt_star.num_UAVs):
+            if ma_rrt_star.paths[s_i, u_i] is not None :
+                p_i = ma_rrt_star.paths[s_i, u_i]
+                x, y = [], []
+                for i in p_i :
+                    x.append(i[0])
+                    y.append(i[1])
+                    plt.scatter(i[0], i[1])
+                trace = go.Scatter(
+                    x=x,
+                    y=y,
+                    line=dict(
+                        color=colors[u_i],
+                        width=4
+                    ),
+                    mode="lines"
+                )
+
+                data.append(trace)
+
+    fig = {'data' : data,
+           'layout' : layout}
+
+    py.offline.plot(fig)
+
+    plt.show()
+    print(paths)
+
+"""
+        for point_id in range(self.num_UAVs):
+
+            while True:
+                p_i_x_ = random.randint(self.search_space.dimension_lengths[0, 0],
+                                        self.search_space.dimension_lengths[0, 1])
+
+                p_i_y_ = random.randint(self.search_space.dimension_lengths[0, 0],
+                                        self.search_space.dimension_lengths[0, 1])
+
+                if [p_i_x_, p_i_y_] not in self.search_points:
+                    flag = True
+                    for other_id in range(self.num_UAVs):
+                        if other_id != point_id:
+                            d = self.calc_distance(p_i_x_, p_i_y_, self.search_points[t_i, other_id, 0],
+                                                    self.search_points[t_i, other_id, 1])
+
+                            if d > self.con_distance:
+                                flag = False
+                                break
+
+                    if not flag:
                         continue
 
-                    # get nearby vertices and cost-to-come
-                    L_near = self.get_nearby_vertices(0, self.x_init, x_new)
-
-                    # check nearby vertices for total cost and connect shortest valid edge
-                    self.connect_shortest_valid(0, x_new, L_near)
-
-                    if x_new in self.trees[0].E :
-                        # rewire tree
-                        self.rewire(0, x_new, L_near)
-
-                    solution = self.check_solution()
-                    if solution[0] :
-                        return solution[1]
+                    self.search_points
+                    break
+"""

@@ -23,7 +23,6 @@ X = SearchSpace(X_dimensions, Obstacles)
 rrt = RRTStar(X, Q, x_init, x_goal, max_samples, r, prc, rewire_count)
 path = rrt.rrt_star()
 
-
 # plot
 plot = Plot("rrt_star_2d")
 plot.plot_tree(X, rrt.trees)
